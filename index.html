@@ -152,6 +152,11 @@ body::before {
   display: flex;
   align-items: baseline;
   gap: 8px;
+  transition: opacity 0.2s;
+}
+
+.stat:hover {
+  opacity: 0.7;
 }
 
 .stat-num {
@@ -618,19 +623,19 @@ body::before {
   </div>
 
   <div class="stats-bar">
-    <div class="stat">
+    <div class="stat" onclick="setFilterFromStat('all')" style="cursor:pointer;">
       <span class="stat-num" id="totalCount">0</span>
       <span class="stat-label">전체</span>
     </div>
-    <div class="stat">
+    <div class="stat" onclick="setFilterFromStat('completed')" style="cursor:pointer;">
       <span class="stat-num" id="completedCount">0</span>
       <span class="stat-label">완독</span>
     </div>
-    <div class="stat">
+    <div class="stat" onclick="setFilterFromStat('reading')" style="cursor:pointer;">
       <span class="stat-num" id="readingCount">0</span>
       <span class="stat-label">읽는 중</span>
     </div>
-    <div class="stat">
+    <div class="stat" onclick="setFilterFromStat('unread')" style="cursor:pointer;">
       <span class="stat-num" id="unreadCount">0</span>
       <span class="stat-label">미독</span>
     </div>
@@ -751,13 +756,7 @@ function renderBooks() {
   });
 
   // Sort: reading first, then unread, then completed. Within each, newest first.
-  const statusOrder = { reading: 0, unread: 1, completed: 2 };
-  filtered.sort((a, b) => {
-    if (statusOrder[a.status] !== statusOrder[b.status]) {
-      return statusOrder[a.status] - statusOrder[b.status];
-    }
-    return (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt);
-  });
+  filtered.sort((a, b) => a.title.localeCompare(b.title, 'ko'));
 
   if (filtered.length === 0) {
     grid.innerHTML = `
@@ -811,6 +810,14 @@ function setFilter(filter, btn) {
   currentFilter = filter;
   document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+  renderBooks();
+}
+
+function setFilterFromStat(filter) {
+  currentFilter = filter;
+  document.querySelectorAll('.filter-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.filter === filter);
+  });
   renderBooks();
 }
 
