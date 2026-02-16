@@ -606,17 +606,18 @@ body::before {
       <span>Personal Library</span>
     </div>
     <div class="header-actions">
-      <button class="btn-export" onclick="exportData()" title="JSON 내보내기">↓ JSON</button>
-      <label class="btn-export" style="cursor:pointer;" title="JSON 가져오기">
+      <button class="btn-export" id="adminToggle" onclick="toggleAdmin()" title="관리자 로그인">🔒 로그인</button>
+      <button class="btn-export admin-only" onclick="exportData()" title="JSON 내보내기" style="display:none;">↓ JSON</button>
+      <label class="btn-export admin-only" style="cursor:pointer;display:none;" title="JSON 가져오기">
         ↑ JSON
         <input type="file" accept=".json" onchange="importData(event)" style="display:none;">
       </label>
-      <label class="btn-export btn-excel" style="cursor:pointer;" title="엑셀 업로드">
+      <label class="btn-export btn-excel admin-only" style="cursor:pointer;display:none;" title="엑셀 업로드">
         ↑ Excel
         <input type="file" accept=".xlsx,.xls,.csv" onchange="importExcel(event)" style="display:none;">
       </label>
       <button class="btn-export" onclick="downloadTemplate()" title="엑셀 템플릿 다운로드">📋 템플릿</button>
-      <button class="btn-add" onclick="openModal()">
+      <button class="btn-add admin-only" onclick="openModal()" style="display:none;">
         <span style="font-size:1.2rem;">+</span> 책 추가
       </button>
     </div>
@@ -714,37 +715,92 @@ body::before {
   </div>
 </div>
 
+<!-- Auth Modal -->
+<div class="modal-overlay" id="authOverlay" onclick="if(event.target===this)closeAuthModal()">
+  <div class="modal" style="max-width:360px;">
+    <h2>🔒 관리자 인증</h2>
+    <div class="form-group">
+      <label>비밀번호</label>
+      <input type="password" id="authPassword" placeholder="비밀번호를 입력하세요" onkeydown="if(event.key==='Enter')submitAuth()">
+    </div>
+    <div class="modal-actions">
+      <button class="btn-cancel" onclick="closeAuthModal()">취소</button>
+      <button class="btn-save" onclick="submitAuth()">확인</button>
+    </div>
+  </div>
+</div>
+
 <div class="toast" id="toast"></div>
 
 <script>
 // ===== DATA LAYER =====
-const STORAGE_KEY = 'bookshelf_data';
 let books = [];
 let currentFilter = 'all';
+let adminPassword = sessionStorage.getItem('admin_pw') || '';
+let isAdmin = false;
 
-// ===== 변경 후 (KV API) =====
 async function loadBooks() {
   try {
     const res = await fetch('/api/books');
     books = await res.json();
-  } catch (e) {
+  } catch {
     books = [];
   }
 }
 
 async function saveBooks() {
-  await fetch('/api/books', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(books),
-  });
+  if (!isAdmin) {
+    showToast('관리자 인증이 필요합니다.');
+    openAuthModal();
+    return false;
+  }
+  try {
+    const res = await fetch('/api/books', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Auth-Password': adminPassword,
+      },
+      body: JSON.stringify(books),
+    });
+    if (res.status === 401) {
+      isAdmin = false;
+      adminPassword = '';
+      sessionStorage.removeItem('admin_pw');
+      showToast('인증이 만료되었습니다. 다시 로그인해주세요.');
+      updateAdminUI();
+      openAuthModal();
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.error('저장 실패:', e);
+    return false;
+  }
 }
 
-// 초기화 부분도 async로 변경
-(async () => {
-  await loadBooks();
-  renderBooks();
-})();
+async function verifyPassword(pw) {
+  try {
+    const res = await fetch('/api/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: pw }),
+    });
+    const data = await res.json();
+    return data.ok;
+  } catch {
+    return false;
+  }
+}
+
+function updateAdminUI() {
+  const editBtns = document.querySelectorAll('.btn-add, .btn-export, .btn-excel, [onclick*="importData"], [onclick*="importExcel"]');
+  document.getElementById('adminToggle').textContent = isAdmin ? '🔓 관리자' : '🔒 로그인';
+  document.getElementById('adminToggle').title = isAdmin ? '로그아웃' : '관리자 로그인';
+  document.querySelectorAll('.admin-only').forEach(el => {
+    el.style.display = isAdmin ? '' : 'none';
+  });
+}
 
 function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
@@ -832,8 +888,52 @@ function setFilterFromStat(filter) {
   renderBooks();
 }
 
+// ===== AUTH =====
+function openAuthModal() {
+  document.getElementById('authOverlay').classList.add('open');
+  document.getElementById('authPassword').value = '';
+  setTimeout(() => document.getElementById('authPassword').focus(), 100);
+}
+
+function closeAuthModal() {
+  document.getElementById('authOverlay').classList.remove('open');
+}
+
+async function submitAuth() {
+  const pw = document.getElementById('authPassword').value;
+  if (!pw) { showToast('비밀번호를 입력해주세요.'); return; }
+
+  const ok = await verifyPassword(pw);
+  if (ok) {
+    adminPassword = pw;
+    isAdmin = true;
+    sessionStorage.setItem('admin_pw', pw);
+    closeAuthModal();
+    updateAdminUI();
+    showToast('관리자 인증 완료!');
+  } else {
+    showToast('비밀번호가 틀렸습니다.');
+  }
+}
+
+function toggleAdmin() {
+  if (isAdmin) {
+    isAdmin = false;
+    adminPassword = '';
+    sessionStorage.removeItem('admin_pw');
+    updateAdminUI();
+    showToast('로그아웃 되었습니다.');
+  } else {
+    openAuthModal();
+  }
+}
+
 // ===== MODAL =====
 function openModal(id) {
+  if (!isAdmin) {
+    openAuthModal();
+    return;
+  }
   const overlay = document.getElementById('modalOverlay');
   const title = document.getElementById('modalTitle');
   const btnDel = document.getElementById('btnDelete');
@@ -872,7 +972,7 @@ function closeModalOutside(e) {
   if (e.target === document.getElementById('modalOverlay')) closeModal();
 }
 
-function saveBook() {
+async function saveBook() {
   const titleVal = document.getElementById('bookTitle').value.trim();
   if (!titleVal) {
     showToast('제목을 입력해주세요.');
@@ -909,17 +1009,17 @@ function saveBook() {
     showToast('추가되었습니다.');
   }
 
-  saveBooks();
+  await saveBooks();
   closeModal();
   renderBooks();
 }
 
-function deleteBook() {
+async function deleteBook() {
   const editId = document.getElementById('editId').value;
   if (!editId) return;
   if (!confirm('이 책을 삭제하시겠습니까?')) return;
   books = books.filter(b => b.id !== editId);
-  saveBooks();
+  await saveBooks();
   closeModal();
   renderBooks();
   showToast('삭제되었습니다.');
@@ -941,11 +1041,10 @@ function importData(event) {
   const file = event.target.files[0];
   if (!file) return;
   const reader = new FileReader();
-  reader.onload = (e) => {
+  reader.onload = async (e) => {
     try {
       const imported = JSON.parse(e.target.result);
       if (!Array.isArray(imported)) throw new Error();
-      // Merge: skip duplicates by id
       const existingIds = new Set(books.map(b => b.id));
       let added = 0;
       imported.forEach(b => {
@@ -954,7 +1053,7 @@ function importData(event) {
           added++;
         }
       });
-      saveBooks();
+      await saveBooks();
       renderBooks();
       showToast(`${added}권 가져오기 완료!`);
     } catch {
@@ -971,7 +1070,7 @@ function importExcel(event) {
   if (!file) return;
 
   const reader = new FileReader();
-  reader.onload = (e) => {
+  reader.onload = async (e) => {
     try {
       const data = new Uint8Array(e.target.result);
       const workbook = XLSX.read(data, { type: 'array' });
@@ -1056,7 +1155,7 @@ function importExcel(event) {
         added++;
       });
 
-      saveBooks();
+      await saveBooks();
       renderBooks();
 
       let msg = `${added}권 추가 완료!`;
@@ -1150,8 +1249,19 @@ function showToast(msg) {
 }
 
 // ===== INIT =====
-loadBooks();
-renderBooks();
+(async () => {
+  await loadBooks();
+  renderBooks();
+  // 세션에 저장된 비밀번호로 자동 인증 시도
+  if (adminPassword) {
+    isAdmin = await verifyPassword(adminPassword);
+    if (!isAdmin) {
+      adminPassword = '';
+      sessionStorage.removeItem('admin_pw');
+    }
+  }
+  updateAdminUI();
+})();
 </script>
 </body>
 </html>
